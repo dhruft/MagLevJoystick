@@ -1,51 +1,28 @@
 #include <Arduino.h>
 
-/* --- Calibration & Geometry --- */
-// Target "Center" values for each sensor (approx 750 based on previous tests)
-const int S_CENTER[] = {750, 750, 750, 750};
-const int S_RANGE = 700; // Expected swing from center to limit
+/* --- Hardware Calibration --- */
+const int S1_FRONT = 50;
+const int S1_BACK = 1450;
+const int S_RANGE = 700;
 
 /* --- Pin Definitions --- */
 struct MagnetPins {
   int rpwm;
   int lpwm;
 };
-
-// 4 Magnets at 0, 90, 180, 270 degrees
-MagnetPins front = {19, 21}; // Y+
-MagnetPins right = {4, 2};   // X+
-MagnetPins back = {5, 18};   // Y-
-MagnetPins left = {17, 16};  // X-
-
-// 4 Sensors at 45, 135, 225, 315 degrees
+MagnetPins front = {19, 21};
+MagnetPins right = {4, 2};
+MagnetPins back = {5, 18};
+MagnetPins left = {17, 16};
 const int IR_SENSORS[] = {36, 39, 34, 35};
-const int NUM_SENSORS = 4;
 
-/* --- Haptic Joystick API --- */
+/* --- Global State (Shared between cores) --- */
+volatile int currentX = 0;
+volatile int currentY = 0;
+volatile int targetFx = 0;
+volatile int targetFy = 0;
 
-/**
- * Reads sensors and calculates XY position.
- * Returns values from -100 to 100.
- */
-void getPosition(int &x, int &y) {
-  int s1 = analogRead(IR_SENSORS[0]); // 45°  (Front-Left)
-  int s2 = analogRead(IR_SENSORS[1]); // 135° (Back-Left)
-  int s3 = analogRead(IR_SENSORS[2]); // 225° (Back-Right)
-  int s4 = analogRead(IR_SENSORS[3]); // 315° (Front-Right)
-
-  // Y-axis (Front - Back)
-  y = ((s1 + s4) - (s2 + s3)) / 2;
-  // X-axis (Right - Left)
-  x = ((s3 + s4) - (s1 + s2)) / 2;
-
-  // Map to -100 to 100 range (approximate mapping)
-  x = constrain(map(x, -S_RANGE, S_RANGE, -100, 100), -100, 100);
-  y = constrain(map(y, -S_RANGE, S_RANGE, -100, 100), -100, 100);
-}
-
-/**
- * Sets raw power to a magnet based on polarity rules.
- */
+/* --- Helper: Set Magnet Power --- */
 void setMagnetPower(MagnetPins m, int pwr) {
   int val = constrain(abs(pwr), 0, 255);
   if (pwr >= 0) {
@@ -57,26 +34,72 @@ void setMagnetPower(MagnetPins m, int pwr) {
   }
 }
 
-/**
- * Applies XY force vectors.
- * fx, fy: -255 to 255
- */
-void applyForce(int fx, int fy) {
-  // Y-AXIS FORCE
-  // To move Front (fy > 0): Pull Front (Atr) + Push Back (Rep)
-  setMagnetPower(front, fy); // Assuming positive is attractive for Front
-  setMagnetPower(back, fy);  // Assuming positive is repulsive for Back
+/* --- Core 1: High-Speed Control Loop --- */
+void ControlTask(void *pvParameters) {
+  analogReadResolution(12);
+  // Set PWM frequency high for silent/smooth operation
+  // Note: analogWrite frequency on ESP32 is fixed but enough for this
 
-  // X-AXIS FORCE
-  // To move Right (fx > 0): Pull Right (Atr) + Push Left (Rep)
-  setMagnetPower(right, fx); // Assuming positive is attractive for Right
-  setMagnetPower(left, fx);  // Assuming positive is repulsive for Left
+  while (true) {
+    // 1. Read Sensors
+    int s1 = analogRead(IR_SENSORS[0]);
+    int s2 = analogRead(IR_SENSORS[1]);
+    int s3 = analogRead(IR_SENSORS[2]);
+    int s4 = analogRead(IR_SENSORS[3]);
+
+    // 2. Calculate Position Vectors
+    int rawY = ((s1 + s4) - (s2 + s3)) / 2;
+    int rawX = ((s3 + s4) - (s1 + s2)) / 2;
+
+    currentX = constrain(map(rawX, -S_RANGE, S_RANGE, -100, 100), -100, 100);
+    currentY = constrain(map(rawY, -S_RANGE, S_RANGE, -100, 100), -100, 100);
+
+    // 3. Safety Check: If out of range, zero the force
+    if (s1 < 10 || s1 > 2500) {
+      setMagnetPower(front, 0);
+      setMagnetPower(back, 0);
+      setMagnetPower(right, 0);
+      setMagnetPower(left, 0);
+    } else {
+      // 4. Apply Force Vectors (Directly from targetFx/targetFy)
+      setMagnetPower(front, targetFy);
+      setMagnetPower(back, targetFy);
+      setMagnetPower(right, targetFx);
+      setMagnetPower(left, targetFx);
+    }
+
+    // Run at ~2kHz
+    vTaskDelay(pdMS_TO_TICKS(0)); // Rapid as possible, yielding minimally
+  }
+}
+
+/* --- Core 0: High-Speed Serial Communication --- */
+void CommTask(void *pvParameters) {
+  Serial.begin(460800); // High baud rate
+  while (true) {
+    // 1. Broadcast Position
+    Serial.print("P:");
+    Serial.print(currentX);
+    Serial.print(",");
+    Serial.println(currentY);
+
+    // 2. Parse Incoming Forces: F:fx,fy
+    if (Serial.available()) {
+      String input = Serial.readStringUntil('\n');
+      if (input.startsWith("F:")) {
+        int commaIndex = input.indexOf(',');
+        if (commaIndex != -1) {
+          targetFx = input.substring(2, commaIndex).toInt();
+          targetFy = input.substring(commaIndex + 1).toInt();
+        }
+      }
+    }
+    // Comm rate ~200Hz is plenty for games, saves CPU for Control Task
+    vTaskDelay(pdMS_TO_TICKS(5));
+  }
 }
 
 void setup() {
-  Serial.begin(115200);
-  analogReadResolution(12);
-
   pinMode(front.rpwm, OUTPUT);
   pinMode(front.lpwm, OUTPUT);
   pinMode(back.rpwm, OUTPUT);
@@ -85,30 +108,13 @@ void setup() {
   pinMode(left.lpwm, OUTPUT);
   pinMode(right.rpwm, OUTPUT);
   pinMode(right.lpwm, OUTPUT);
+
+  // Create Tasks
+  xTaskCreatePinnedToCore(ControlTask, "Control", 4096, NULL, 5, NULL, 1);
+  xTaskCreatePinnedToCore(CommTask, "Comm", 4096, NULL, 1, NULL, 0);
 }
 
 void loop() {
-  int x, y;
-  getPosition(x, y);
-
-  // 1. Broadcast Position
-  Serial.print("POS:");
-  Serial.print(x);
-  Serial.print(",");
-  Serial.println(y);
-
-  // 2. Read Force Commands: SETF:fx,fy
-  if (Serial.available()) {
-    String input = Serial.readStringUntil('\n');
-    if (input.startsWith("SETF:")) {
-      int commaIndex = input.indexOf(',');
-      if (commaIndex != -1) {
-        int fx = input.substring(5, commaIndex).toInt();
-        int fy = input.substring(commaIndex + 1).toInt();
-        applyForce(fx, fy);
-      }
-    }
-  }
-
-  delay(10);
+  // Main loop remains empty as we use FreeRTOS Tasks
+  vTaskDelete(NULL);
 }
