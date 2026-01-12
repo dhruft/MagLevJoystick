@@ -1,0 +1,6 @@
+.pio
+.vscode
+.python_version
+__pycache__/
+*.bak
+.DS_Store
