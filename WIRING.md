@@ -1,22 +1,19 @@
-# MagLev Wiring Guide (Refined: BTS7960 & TCRT5000 Array)
+# MagLev Teensy 4.1 Wiring
 
-## Electromagnets (BTS7960 Drivers)
-Each electromagnet uses a BTS7960 driver, allowing for bi-directional control (useful if polarity switching is needed, though usually MagLev attracts/repels).
+## Electromagnets (BTS7960)
+| Magnet | RPWM (Teensy) | LPWM (Teensy) | Notes |
+| :--- | :--- | :--- | :--- |
+| **Front** | 37 | 36 | Y-axis Positive |
+| **Back** | 23 | 22 | Y-axis Negative |
 
-| Magnet | RPWM Pin | LPWM Pin | GPIOs | Orientation |
-|--------|----------|----------|-------|-------------|
-| Front  | 19       | 21       | 19, 21| 0°          |
-| Back   | 5        | 18       | 5, 18 | 180°        |
+## TCRT5000 Sensors (4-Axis)
+| Sensor | Pin (Teensy) | Axis |
+| :--- | :--- | :--- |
+| **Sensor 1** | 24 (A10) | 45° |
+| **Sensor 2** | 25 (A11) | 135° |
+| **Sensor 3** | 16 (A2) | 225° |
+| **Sensor 4** | 17 (A3) | 315° |
 
-*Note: BTS7960 also typically requires L_EN and R_EN pins tied to 5V or ESP32 GPIOs.*
-
-## TCRT5000 Infrared Sensors (45° CCW Offset)
-| Sensor   | ESP32 Pin | GPIO | Relative to |
-|----------|-----------|------|-------------|
-| Sensor 1 | VP        | 36   | Front CCW 45° |
-| Sensor 2 | VN        | 39   | Back CCW 45°  |
-
-## Connection Notes
-- **Common Ground**: All GND pins must be shared between ESP32 and Power Supplies.
-- **TCRT5000 Logic**: IR sensors are powered by 3.3V to match ESP32 ADC range.
-- **BTS7960 Power**: RPWM/LPWM are PWM signals. **CAUTION**: Ensure the BTS7960 VCC (logic) is compatible with ESP32 3.3V (some require 5V logic).
+## Note on EN Pins
+- Tie all `L_EN` and `R_EN` pins on the BTS7960 drivers to Teensy **3.3V**.
+- Power the TCRT5000 sensors from Teensy **3.3V**.

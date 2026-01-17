@@ -1,6 +1,11 @@
-# 🎮 MagLev Haptic Joystick API
+## 🏗 System Architecture
 
-Welcome to the MagLev project! This repository provides a high-speed interface to a custom 2D haptic joystick powered by an ESP32 and electromagnets.
+The project is split into two distinct layers that talk over USB:
+
+1.  **Device Layer (C++ / Teensy 4.1)**: Runs directly on the Teensy hardware. It handles the "Real-Time" magnetic stabilization (kHz loop), reading sensors, and driving the electromagnets.
+2.  **Application Layer (Python / Laptop)**: Runs on your computer. This is where your game logic lives. It sends "Goal Forces" to the Teensy and receives "Current Position" data.
+
+---
 
 ## 🚀 Orientation for Python Developers
 
